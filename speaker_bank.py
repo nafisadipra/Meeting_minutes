@@ -1,19 +1,30 @@
 from scipy.spatial.distance import cosine
 
 class SmartSpeakerBank:
-    def __init__(self, threshold=0.4, alpha=0.1):
+    def __init__(self, attendees=None, threshold=0.4, alpha=0.1):
         self.centroids = {}  
         self.threshold = threshold
         self.alpha = alpha   
         self.next_id = 1
+        # Store the list of names provided by the user
+        self.attendees = attendees if attendees else []
+
+    def _get_next_name(self):
+        # If we still have real names in the list, use them
+        if self.attendees:
+            return self.attendees.pop(0) 
+        # If a 3rd person speaks but we only gave 2 names, call them Guest
+        else:
+            name = f"Guest_{self.next_id:02d}"
+            self.next_id += 1
+            return name
 
     def process_segment(self, vector):
         vec_flat = vector.flatten()
 
         if not self.centroids:
-            label = f"Speaker_{self.next_id:02d}"
+            label = self._get_next_name()
             self.centroids[label] = vec_flat
-            self.next_id += 1
             return label
 
         best_label = None
@@ -31,7 +42,6 @@ class SmartSpeakerBank:
             self.centroids[best_label] = new_centroid
             return best_label
         else:
-            label = f"Speaker_{self.next_id:02d}"
+            label = self._get_next_name()
             self.centroids[label] = vec_flat
-            self.next_id += 1
             return label
