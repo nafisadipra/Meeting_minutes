@@ -28,6 +28,10 @@ def start_meeting():
     data = request.json or {}
     attendees_list = data.get('attendees', [])
     
+    # Delete the old minutes file before starting a new meeting
+    if os.path.exists("minutes.txt"):
+        os.remove("minutes.txt")
+    
     # If a meeting isn't already running, start a new one
     if current_assistant is None or not current_assistant.is_recording:
         # Initialize a fresh assistant with the provided names
@@ -48,6 +52,19 @@ def stop_meeting():
         return jsonify({"status": "Stopping and summarizing...", "is_recording": False}), 200
         
     return jsonify({"status": "Not currently recording", "is_recording": False}), 200
+
+@app.route('/api/clear', methods=['POST'])
+def clear_meeting():
+    global current_assistant
+    
+    # Only allow clearing if we aren't actively recording
+    if current_assistant and not current_assistant.is_recording:
+        current_assistant.full_transcript = [] # Wipe the transcript memory
+        
+    if os.path.exists("minutes.txt"):
+        os.remove("minutes.txt") # Wipe the file
+        
+    return jsonify({"status": "Cleared"}), 200
 
 @app.route('/api/transcript', methods=['GET'])
 def get_transcript():
