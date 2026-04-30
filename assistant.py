@@ -13,10 +13,14 @@ class MeetingAssistant:
     def __init__(self, hf_token, expected_attendees=None): 
         self.audio_queue = queue.Queue()
         self.is_recording = False
+        
         self.recognizer = sr.Recognizer()
+        self.recognizer.energy_threshold = 300
+        self.recognizer.dynamic_energy_threshold = True
+        self.recognizer.pause_threshold = 0.5
+        
         self.full_transcript = []
         
-        # Pass the attendees down to the bank
         self.bank = SmartSpeakerBank(attendees=expected_attendees)
         self.summarizer = LocalLLMSummarizer()
         
@@ -50,6 +54,8 @@ class MeetingAssistant:
                 try:
                     text = self.recognizer.recognize_google(audio_window)
                 except sr.UnknownValueError:
+                    #for mic testing
+                    print("[Mic] Caught audio, but words were unclear.")
                     continue
                 except sr.RequestError as e:
                     print(f"API Error: {e}")
