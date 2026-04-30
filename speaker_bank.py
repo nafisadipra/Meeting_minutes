@@ -1,7 +1,7 @@
 from scipy.spatial.distance import cosine
 
 class SmartSpeakerBank:
-    def __init__(self, attendees=None, threshold=0.4, alpha=0.1):
+    def __init__(self, attendees=None, threshold=0.75, alpha=0.25):
         self.centroids = {}  
         self.threshold = threshold
         self.alpha = alpha   
