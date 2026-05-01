@@ -11,7 +11,7 @@ from speaker_bank import SmartSpeakerBank
 from summarizer import LocalLLMSummarizer
 
 class MeetingAssistant:
-    def __init__(self, hf_token, expected_attendees=None): 
+    def __init__(self, hf_token, enrolled_profiles=None): 
         self.audio_queue = queue.Queue()
         self.is_recording = False
         self.last_speaker = "Unknown"
@@ -19,15 +19,15 @@ class MeetingAssistant:
         self.recognizer = sr.Recognizer()
         self.recognizer.energy_threshold = 300
         self.recognizer.dynamic_energy_threshold = True
-        self.recognizer.pause_threshold = 0.8 # Slightly longer pause so Whisper can grab full sentences
+        self.recognizer.pause_threshold = 0.8 
         
         self.full_transcript = []
         
-        self.bank = SmartSpeakerBank(attendees=expected_attendees)
+        # 2. Now this line will turn normal because it matches the top line!
+        self.bank = SmartSpeakerBank(anchor_profiles=enrolled_profiles)
         self.summarizer = LocalLLMSummarizer()
         
         print("Loading Whisper Speech-to-Text Model...")
-        # "base.en" is incredibly fast and highly accurate for English
         self.whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
         
         print("Loading Pyannote Embedding Model...")

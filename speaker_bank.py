@@ -1,47 +1,46 @@
 from scipy.spatial.distance import cosine
 
 class SmartSpeakerBank:
-    def __init__(self, attendees=None, threshold=0.75, alpha=0.25):
-        self.centroids = {}  
+    # anchor_profiles is a dictionary like: {"Nafis": [0.12, 0.45, ...], "Muyeed": [0.88, 0.21, ...]}
+    def __init__(self, anchor_profiles=None, threshold=0.75, alpha=0.25):
+        # Start the bank with the pre-enrolled voice profiles!
+        self.centroids = anchor_profiles if anchor_profiles else {}
         self.threshold = threshold
         self.alpha = alpha   
-        self.next_id = 1
-        # Store the list of names provided by the user
-        self.attendees = attendees if attendees else []
+        self.next_guest_id = 1
 
-    def _get_next_name(self):
-        # If we still have real names in the list, use them
-        if self.attendees:
-            return self.attendees.pop(0) 
-        # If a 3rd person speaks but we only gave 2 names, call them Guest
-        else:
-            name = f"Guest_{self.next_id:02d}"
-            self.next_id += 1
-            return name
+    def _get_guest_name(self):
+        name = f"Guest_{self.next_guest_id:02d}"
+        self.next_guest_id += 1
+        return name
 
     def process_segment(self, vector):
         vec_flat = vector.flatten()
 
+        # If we have no profiles at all, the first person speaking is Guest_01
         if not self.centroids:
-            label = self._get_next_name()
+            label = self._get_guest_name()
             self.centroids[label] = vec_flat
             return label
 
         best_label = None
         min_dist = float('inf')
 
+        # Compare the incoming voice to all our enrolled profiles (and previous guests)
         for label, centroid in self.centroids.items():
             dist = cosine(vec_flat, centroid)
             if dist < min_dist:
                 min_dist = dist
                 best_label = label
 
+        # If it's a match, update the profile slightly to adapt to their microphone today
         if min_dist < self.threshold:
             old_centroid = self.centroids[best_label]
             new_centroid = (old_centroid * (1 - self.alpha)) + (vec_flat * self.alpha)
             self.centroids[best_label] = new_centroid
             return best_label
         else:
-            label = self._get_next_name()
+            # If the voice doesn't match Nafis or Muyeed, it's a new guest!
+            label = self._get_guest_name()
             self.centroids[label] = vec_flat
             return label
