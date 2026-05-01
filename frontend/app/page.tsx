@@ -2,26 +2,26 @@
 
 import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
+import Profiling, { Attendee } from "./components/profiling"; // Adjust path if you put it in a components folder
 
 export default function Home() {
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState<string[]>([]);
   const [minutes, setMinutes] = useState<string | null>(null);
-  const [attendeesInput, setAttendeesInput] = useState("");
+  
+  // State lifted up from profiling.tsx
+  const [attendees, setAttendees] = useState<Attendee[]>([]);
 
   const startMeeting = async () => {
     setMinutes(null);
     setTranscript([]);
     
-    const attendees = attendeesInput
-      .split(",")
-      .map(name => name.trim())
-      .filter(name => name.length > 0);
+    const attendeeNames = attendees.map(a => a.name);
 
     await fetch("http://127.0.0.1:5000/api/start", { 
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ attendees })
+      body: JSON.stringify({ attendees: attendeeNames })
     });
     
     setIsRecording(true);
@@ -38,7 +38,6 @@ export default function Home() {
     setMinutes(null);
   };
 
-  // --- NEW: Download Function ---
   const downloadMinutes = () => {
     if (!minutes) return;
     const blob = new Blob([minutes], { type: "text/markdown" });
@@ -67,7 +66,7 @@ export default function Home() {
           }
         }
       } catch (error) {
-        console.error("Make sure your Flask server is running!");
+        // Silent catch for polling
       }
     }, 2000); 
 
@@ -78,53 +77,39 @@ export default function Home() {
     <main className="min-h-screen p-10 font-sans text-gray-800 bg-gray-50">
       <div className="max-w-5xl mx-auto space-y-8">
         
-        <header className="flex items-end justify-between pb-6 border-b border-gray-200">
-          <div>
-            <h1 className="mb-2 text-3xl font-bold tracking-tight text-gray-900">AI Meeting Assistant</h1>
-            <div className="flex flex-col space-y-1">
-              <label className="text-sm font-semibold text-gray-600">Expected Attendees (Comma-separated)</label>
-              <input 
-                type="text" 
-                placeholder="e.g., Nafis, Muyeed" 
-                value={attendeesInput}
-                onChange={(e) => setAttendeesInput(e.target.value)}
-                disabled={isRecording}
-                className="w-80 px-3 py-2 border border-gray-300 rounded-md disabled:bg-gray-100 disabled:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+        <header className="flex flex-col space-y-6 pb-6 border-b border-gray-200">
+          <div className="flex items-end justify-between">
+            <h1 className="text-3xl font-bold tracking-tight text-gray-900">AI Meeting Assistant</h1>
+            
+            <div className="space-x-4">
+              {!isRecording ? (
+                <>
+                  {(transcript.length > 0 || minutes) && (
+                    <button onClick={clearMeeting} className="px-6 py-3 font-semibold text-gray-700 transition bg-gray-200 rounded-lg hover:bg-gray-300">
+                      Clear Data
+                    </button>
+                  )}
+                  <button onClick={startMeeting} className="px-6 py-3 font-semibold text-white transition bg-blue-600 rounded-lg hover:bg-blue-700">
+                    Start Recording
+                  </button>
+                </>
+              ) : (
+                <button onClick={stopMeeting} className="px-6 py-3 font-semibold text-white transition bg-red-600 rounded-lg animate-pulse hover:bg-red-700">
+                  Stop & Summarize
+                </button>
+              )}
             </div>
           </div>
-          
-          <div className="space-x-4">
-            {!isRecording ? (
-              <>
-                {(transcript.length > 0 || minutes) && (
-                  <button 
-                    onClick={clearMeeting}
-                    className="px-6 py-3 font-semibold text-gray-700 transition bg-gray-200 rounded-lg hover:bg-gray-300"
-                  >
-                    Clear Data
-                  </button>
-                )}
-                <button 
-                  onClick={startMeeting}
-                  className="px-6 py-3 font-semibold text-white transition bg-blue-600 rounded-lg hover:bg-blue-700"
-                >
-                  Start Recording
-                </button>
-              </>
-            ) : (
-              <button 
-                onClick={stopMeeting}
-                className="px-6 py-3 font-semibold text-white transition bg-red-600 rounded-lg animate-pulse hover:bg-red-700"
-              >
-                Stop & Summarize
-              </button>
-            )}
-          </div>
+
+          {/* Injecting the new component and passing down state */}
+          <Profiling 
+            attendees={attendees} 
+            setAttendees={setAttendees} 
+            isRecording={isRecording} 
+          />
         </header>
 
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
-          
           {/* Live Transcript Panel */}
           <div className="flex flex-col p-6 bg-white border border-gray-200 shadow-sm rounded-xl h-[600px]">
             <h2 className="mb-4 text-xl font-semibold">Live Transcript</h2>
@@ -143,13 +128,8 @@ export default function Home() {
           <div className="flex flex-col p-6 bg-white border border-gray-200 shadow-sm rounded-xl h-[600px]">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-semibold">AI Meeting Minutes</h2>
-              {/* --- NEW: Download Button (Only shows when minutes are ready) --- */}
               {minutes && (
-                <button 
-                  onClick={downloadMinutes}
-                  className="flex items-center px-3 py-1.5 text-sm font-semibold text-green-700 bg-green-100 rounded hover:bg-green-200 transition"
-                >
-                  <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                <button onClick={downloadMinutes} className="flex items-center px-3 py-1.5 text-sm font-semibold text-green-700 bg-green-100 rounded hover:bg-green-200 transition">
                   Download .md
                 </button>
               )}
@@ -157,7 +137,6 @@ export default function Home() {
             
             <div className="flex-1 p-6 overflow-y-auto bg-gray-50 border border-gray-100 rounded-lg">
               {minutes ? (
-                // --- NEW: React Markdown Styling ---
                 <div className="text-gray-800">
                   <ReactMarkdown
                     components={{
@@ -175,7 +154,6 @@ export default function Home() {
                 </div>
               ) : !isRecording && transcript.length > 0 ? (
                 <div className="flex items-center space-x-2 text-orange-600 animate-pulse">
-                  <svg className="w-5 h-5 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                   <span className="font-semibold">Generating document via LM Studio...</span>
                 </div>
               ) : (
@@ -183,7 +161,6 @@ export default function Home() {
               )}
             </div>
           </div>
-
         </div>
       </div>
     </main>
