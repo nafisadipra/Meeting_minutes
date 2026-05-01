@@ -1,140 +1,163 @@
 "use client";
 
-import { useState, useRef } from "react";
-
-export interface Attendee {
-  name: string;
-  enrolled: boolean;
-}
+import { useState, useRef, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface ProfilingProps {
-  attendees: Attendee[];
-  setAttendees: React.Dispatch<React.SetStateAction<Attendee[]>>;
-  isRecording: boolean;
+  onProfileComplete: (name: string) => void;
 }
 
-export default function Profiling({ attendees, setAttendees, isRecording }: ProfilingProps) {
-  const [newAttendeeName, setNewAttendeeName] = useState("");
-  const [enrollingFor, setEnrollingFor] = useState<string | null>(null);
+export default function Profiling({ onProfileComplete }: ProfilingProps) {
+  const [name, setName] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [profiles, setProfiles] = useState<string[]>([]);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  const addAttendee = () => {
-    if (!newAttendeeName.trim()) return;
-    setAttendees([...attendees, { name: newAttendeeName.trim(), enrolled: false }]);
-    setNewAttendeeName("");
-  };
+  // Fetch already saved profiles from the backend when the component loads
+  useEffect(() => {
+    const fetchExistingProfiles = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:5000/api/list_profiles");
+        const data = await res.json();
+        if (data.enrolled_profiles) {
+          setProfiles(data.enrolled_profiles);
+        }
+      } catch (err) {
+        console.error("Failed to fetch existing profiles", err);
+      }
+    };
+    fetchExistingProfiles();
+  }, []);
 
-  const removeAttendee = (nameToRemove: string) => {
-    setAttendees(attendees.filter(a => a.name !== nameToRemove));
-  };
-
-  const recordVoicePrint = async (name: string) => {
+  const recordVoice = async () => {
+    if (!name.trim()) return;
+    
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      
-      const audioChunks: BlobPart[] = [];
-      setEnrollingFor(name);
+      const chunks: BlobPart[] = [];
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunks.push(event.data);
-      };
-
+      setIsRecording(true);
+      mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+        const blob = new Blob(chunks, { type: "audio/webm" });
         const formData = new FormData();
-        formData.append("audio", audioBlob, `${name}_profile.webm`);
+        formData.append("audio", blob, `${name}.webm`);
         formData.append("name", name);
 
-        try {
-          await fetch("http://127.0.0.1:5000/api/enroll_voice", {
-            method: "POST",
-            body: formData,
-          });
-
-          setAttendees(prev => 
-            prev.map(a => a.name === name ? { ...a, enrolled: true } : a)
-          );
-        } catch (error) {
-          console.error("Failed to upload voice profile", error);
-          alert("Failed to connect to backend for voice enrollment.");
-        }
+        await fetch("http://127.0.0.1:5000/api/enroll_voice", { method: "POST", body: formData });
         
-        setEnrollingFor(null);
-        stream.getTracks().forEach(track => track.stop()); 
+        setProfiles((prev) => [...prev, name]); // Safely update state
+        onProfileComplete(name);
+        setName("");
+        setIsRecording(false);
+        stream.getTracks().forEach(t => t.stop());
       };
 
       mediaRecorder.start();
-      
-      setTimeout(() => {
-        if (mediaRecorder.state === "recording") {
-          mediaRecorder.stop();
-        }
-      }, 5000);
-
+      setTimeout(() => { if (mediaRecorder.state === "recording") mediaRecorder.stop(); }, 5000);
     } catch (err) {
-      console.error("Microphone access denied", err);
-      alert("Please allow microphone permissions to record a voice profile.");
+      console.error("Mic access denied", err);
     }
   };
 
   return (
-    <div className="p-5 bg-white border border-gray-200 rounded-xl shadow-sm">
-      <h3 className="mb-3 font-semibold text-gray-700">Meeting Attendees & Voice Profiles</h3>
-      
-      <div className="flex space-x-2 mb-4">
-        <input 
-          type="text" 
-          placeholder="Enter attendee name..." 
-          value={newAttendeeName}
-          onChange={(e) => setNewAttendeeName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addAttendee()}
-          disabled={isRecording}
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-        />
-        <button 
-          onClick={addAttendee}
-          disabled={isRecording || !newAttendeeName.trim()}
-          className="px-4 py-2 text-sm font-semibold text-white bg-gray-800 rounded-md hover:bg-gray-900 disabled:opacity-50"
-        >
-          Add Person
-        </button>
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3 }}
+      className="w-full h-full space-y-6"
+    >
+      <div className="flex items-center gap-3 mb-2">
+        <div className="w-10 h-10 bg-white border border-[#a4c3b2]/30 rounded-xl flex items-center justify-center text-xl shadow-sm">
+          🎙️
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight text-black">Voice Identity Registration</h1>
       </div>
 
-      {attendees.length > 0 && (
-        <ul className="space-y-2">
-          {attendees.map((attendee) => (
-            <li key={attendee.name} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-100 rounded-lg">
-              <span className="font-medium text-gray-800">{attendee.name}</span>
-              <div className="flex space-x-3 items-center">
-                {attendee.enrolled ? (
-                  <span className="text-sm font-semibold text-green-600">✓ Voice Enrolled</span>
-                ) : (
-                  <button 
-                    onClick={() => recordVoicePrint(attendee.name)}
-                    disabled={isRecording || enrollingFor !== null}
-                    className={`text-sm px-3 py-1.5 rounded-md font-medium transition ${
-                      enrollingFor === attendee.name 
-                        ? "bg-red-100 text-red-600 animate-pulse" 
-                        : "bg-blue-100 text-blue-700 hover:bg-blue-200"
-                    }`}
-                  >
-                    {enrollingFor === attendee.name ? "Recording (5s)..." : "🎤 Record Voice (5s)"}
-                  </button>
-                )}
-                <button 
-                  onClick={() => removeAttendee(attendee.name)}
-                  disabled={isRecording}
-                  className="text-gray-400 hover:text-red-500"
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        
+        {/* Left Column: Enrollment Tool */}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#a4c3b2]/30 h-fit">
+          <h3 className="text-sm font-bold text-[#6b9080] uppercase tracking-widest mb-4 border-b border-[#eaf4f4] pb-2">Capture Voice Print</h3>
+          <p className="text-xs text-black/60 font-medium mb-6">
+            Enter an attendee's name and record a 5-second audio sample to train the local AI recognition engine.
+          </p>
+          
+          <div className="space-y-4">
+            <input 
+              className="w-full px-4 py-3 text-sm bg-[#eaf4f4] border-none rounded-xl focus:ring-2 focus:ring-[#6b9080] transition-all outline-none text-black placeholder:text-[#a4c3b2] font-medium"
+              placeholder="e.g. John Doe"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={isRecording}
+            />
+            
+            <button 
+              onClick={recordVoice}
+              disabled={isRecording || !name.trim()}
+              className={`w-full py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
+                isRecording 
+                  ? 'bg-black text-[#eaf4f4] shadow-md' 
+                  : 'bg-[#6b9080] text-white hover:bg-[#587a6b] disabled:bg-[#eaf4f4] disabled:text-[#a4c3b2] shadow-sm disabled:shadow-none'
+              }`}
+            >
+              {isRecording ? (
+                <>
+                  <motion.span 
+                    animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }} 
+                    transition={{ repeat: Infinity, duration: 1.5 }}
+                    className="w-2.5 h-2.5 bg-[#eaf4f4] rounded-full" 
+                  />
+                  Recording Audio...
+                </>
+              ) : (
+                "Start 5s Recording"
+              )}
+            </button>
+          </div>
+        </div>
+
+        {/* Right Column: Active Roster */}
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-[#a4c3b2]/30">
+          <h3 className="text-sm font-bold text-[#6b9080] uppercase tracking-widest mb-4 border-b border-[#eaf4f4] pb-2">Enrolled Roster</h3>
+          
+          <div className="flex flex-col gap-3">
+            <AnimatePresence>
+              {profiles.length === 0 && (
+                <motion.div 
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                  className="flex flex-col items-center justify-center py-10 text-center space-y-2"
                 >
-                  ✕
-                </button>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
+                  <span className="text-3xl opacity-40">📭</span>
+                  <p className="text-[#a4c3b2] italic text-xs font-medium">No voice profiles registered for this session.</p>
+                </motion.div>
+              )}
+              {profiles.map((p, index) => (
+                <motion.div 
+                  key={p} 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="flex items-center gap-3 p-3 bg-[#eaf4f4]/40 rounded-xl border border-[#eaf4f4]"
+                >
+                  <div className="w-10 h-10 bg-white text-[#6b9080] rounded-lg border border-[#a4c3b2]/20 flex items-center justify-center font-bold text-base shadow-sm">
+                    {p[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 flex flex-col">
+                    <span className="text-sm font-bold text-black">{p}</span>
+                    <span className="text-[10px] font-medium text-[#6b9080]">Voice matched & locked</span>
+                  </div>
+                  <span className="text-[9px] font-bold text-white bg-[#a4c3b2] px-2.5 py-1 rounded-full uppercase tracking-wider shadow-sm">
+                    Ready
+                  </span>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        </div>
+
+      </div>
+    </motion.div>
   );
 }
