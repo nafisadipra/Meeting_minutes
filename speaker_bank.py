@@ -6,21 +6,18 @@ from scipy.spatial.distance import cosine
 class SmartSpeakerBank:
     """
     Speaker bank with live-enrollment-first design.
-    
-    Critical change: pre-enrolled profiles are used only as HINTS to
-    assign human-readable names to speakers discovered live, not as
-    direct distance-matching anchors. This is because pyannote embeddings
-    extracted under different recording conditions (enrollment mic vs
-    meeting mic) often have cosine distances above 0.7 even for the
-    same speaker, which causes false negatives.
-    
-    The matching pipeline is now:
-    1. Live profiles (built from in-meeting audio) are the source of truth
-       for distance matching.
+
+    Pre-enrolled profiles are used only as HINTS to assign human-readable
+    names to speakers discovered live, not as direct distance-matching
+    anchors. This is because embeddings extracted under different recording
+    conditions (enrollment mic vs meeting mic) are too unstable for
+    reliable cross-condition matching.
+
+    Pipeline:
+    1. Live profiles (built from in-meeting audio) drive all matching.
     2. When a new live profile is created, we check if any pre-enrolled
-       profile is its closest match and inherit that name as a hint.
-    3. Otherwise, the speaker gets a Guest_NN name that you can rename
-       after the meeting.
+       profile is its closest match and inherit that name.
+    3. Otherwise the speaker gets a Guest_NN name.
     """
 
     def __init__(
@@ -32,9 +29,9 @@ class SmartSpeakerBank:
         new_speaker_threshold=0.72,
         use_anchors_as_hints_only=False,
     ):
-        # Live profiles (built during meeting) - these drive matching
+        # Live profiles built during the meeting - these drive matching
         self.centroids = {}
-        # Total accumulated samples per centroid (used for adaptive alpha)
+        # Total accumulated samples per centroid (for adaptive update weight)
         self.centroid_sample_counts = {}
         # Number of update events per centroid
         self.centroid_counts = {}
@@ -56,8 +53,7 @@ class SmartSpeakerBank:
         self.use_anchors_as_hints_only = use_anchors_as_hints_only
         self.next_guest_id = 1
 
-        # If we are NOT using anchors as hints only, copy them as live centroids
-        # (legacy behavior). Default for this version is hints-only.
+        # Legacy mode: if hints-only is disabled, seed live centroids from anchors
         if not use_anchors_as_hints_only:
             for name, vec in self.anchor_profiles.items():
                 self.centroids[name] = vec.copy()
@@ -66,9 +62,9 @@ class SmartSpeakerBank:
 
     def _claim_name_from_anchors(self, vector):
         """
-        Look at pre-enrolled anchor profiles. If one is closest to this
-        new live profile AND is closer than any other anchor by a margin,
-        claim that name. Otherwise return None.
+        Check pre-enrolled anchor profiles. If one is clearly closest to
+        this new live profile, claim that name and remove it from the
+        anchor pool so it cannot be claimed twice.
         """
         if not self.anchor_profiles:
             return None
@@ -82,30 +78,27 @@ class SmartSpeakerBank:
 
         best_name, best_dist = scored[0]
 
-        # Loose threshold here: we're using this only as a naming hint,
-        # not as a hard match. Even noisy cross-condition matches usually
-        # land below 0.85 for the correct speaker.
+        # Loose threshold: this is a naming hint, not a hard match.
+        # Cross-condition same-speaker distances can be high but rarely
+        # exceed 0.85 for ECAPA-TDNN embeddings.
         if best_dist > 0.85:
             return None
 
-        # Require a margin over the second-best to avoid ambiguous claims
+        # Require a clear margin over second-best to avoid ambiguous claims
         if len(scored) > 1:
             second_dist = scored[1][1]
             if second_dist - best_dist < 0.05:
                 return None
 
-        # Remove the claimed anchor so it can't be claimed twice
-        claimed_name = best_name
-        del self.anchor_profiles[claimed_name]
-        # Also remove from expected_attendees if present
-        if claimed_name in self.expected_attendees:
-            self.expected_attendees.remove(claimed_name)
-        return claimed_name
+        del self.anchor_profiles[best_name]
+        if best_name in self.expected_attendees:
+            self.expected_attendees.remove(best_name)
+        return best_name
 
     def _get_speaker_name(self, vector=None):
         """
-        Generate a name for a newly-discovered speaker.
-        Tries in order: anchor profile match, expected attendee, guest ID.
+        Assign a name to a newly discovered speaker.
+        Priority: anchor profile match > expected attendee list > Guest_NN.
         """
         if vector is not None:
             claimed = self._claim_name_from_anchors(vector)
@@ -129,9 +122,9 @@ class SmartSpeakerBank:
 
     def update_centroid(self, label, vector, n_samples=48000):
         """
-        Update a centroid with a new sample, weighted by sample count.
-        Larger samples get more weight; longer-established centroids
-        update more slowly.
+        Update a centroid as a weighted average of all samples seen so far.
+        Larger audio chunks get more weight. Established centroids update
+        more slowly to stay stable.
         """
         vec_flat = np.asarray(vector).flatten()
         if label not in self.centroids:
@@ -141,16 +134,19 @@ class SmartSpeakerBank:
         old_sample_count = self.centroid_sample_counts.get(label, 48000)
         new_total = old_sample_count + n_samples
 
-        # Weighted average: each centroid is a weighted mean of all samples
         weight = n_samples / new_total
-        # Cap weight to prevent any single sample from dominating
-        weight = min(weight, 0.4)
+        weight = min(weight, 0.4)  # cap so no single sample dominates
 
         self.centroids[label] = (old * (1 - weight)) + (vec_flat * weight)
         self.centroid_sample_counts[label] = min(new_total, 240000)  # cap at 15s
         self.centroid_counts[label] = self.centroid_counts.get(label, 0) + 1
 
     def score_against_known(self, vector, target_label):
+        """
+        Score an embedding specifically against one known speaker.
+        Returns (best_label, confidence). Used by the assistant for
+        continuity verification on short audio segments.
+        """
         vec_flat = np.asarray(vector).flatten()
         if target_label not in self.centroids:
             return self.process_segment(vector, allow_new_speaker=False, dry_run=True)
@@ -169,10 +165,21 @@ class SmartSpeakerBank:
 
     def process_segment(self, vector, allow_new_speaker=True, dry_run=False,
                         prefer_label=None, n_samples=48000):
+        """
+        Main matching entry point. Returns (label, confidence).
+
+        prefer_label: when provided, wins ties within the margin. Used by
+        the assistant to enforce continuity when no transition is detected.
+
+        allow_new_speaker: when False, assigns to the nearest known speaker
+        even if the threshold is exceeded. Prevents spurious guest creation
+        from short or unreliable audio.
+
+        dry_run: when True, skips all centroid updates. Used for scoring only.
+        """
         vec_flat = np.asarray(vector).flatten()
 
-        # Cold start: no live centroids yet. Create the first one and
-        # try to claim a name from anchor profiles.
+        # Cold start: no live centroids yet
         if not self.centroids:
             label = self._get_speaker_name(vector=vec_flat)
             if not dry_run:
@@ -184,7 +191,7 @@ class SmartSpeakerBank:
         distances = self._all_distances(vec_flat)
         best_label, best_dist = distances[0]
 
-        # Continuity preference
+        # Apply continuity preference within a doubled margin
         if prefer_label and prefer_label in self.centroids:
             prefer_dist = cosine(vec_flat, self.centroids[prefer_label])
             if prefer_dist - best_dist < self.margin * 2:
@@ -193,27 +200,28 @@ class SmartSpeakerBank:
 
         confidence = max(0.0, 1.0 - best_dist)
 
+        # Reduce confidence when the top two matches are very close
         if len(distances) > 1:
             second_dist = distances[1][1]
-            ambiguity = second_dist - best_dist
-            if ambiguity < self.margin:
+            if second_dist - best_dist < self.margin:
                 confidence *= 0.7
 
+        # Strong match
         if best_dist < self.threshold:
             if not dry_run:
                 self.update_centroid(best_label, vec_flat, n_samples=n_samples)
             return best_label, confidence
 
-        # Uncertain zone: still likely the same speaker, just with variation
+        # Uncertain zone: likely same speaker with acoustic variation
         if best_dist < self.new_speaker_threshold:
             if not dry_run:
                 self.update_centroid(best_label, vec_flat, n_samples=n_samples)
             return best_label, confidence * 0.8
 
+        # Beyond new-speaker threshold
         if not allow_new_speaker:
             return best_label, confidence * 0.5
 
-        # New speaker: try to claim an anchor name
         label = self._get_speaker_name(vector=vec_flat)
         if not dry_run:
             self.centroids[label] = vec_flat
@@ -223,13 +231,13 @@ class SmartSpeakerBank:
 
     def get_finalized_centroids(self):
         """
-        Return all live centroids. After the meeting, you can also try
-        to retroactively assign anchor names to any unclaimed Guest_NN
-        speakers by checking distances against remaining anchors.
+        Return all live centroids. Retroactively renames any unclaimed
+        Guest_NN speakers to anchor names if a close enough match exists.
+        This runs once at meeting end so the returned profiles and the
+        saved transcript use the best available names.
         """
         result = dict(self.centroids)
 
-        # Try to retroactively rename Guest_NN speakers to anchor names
         if self.anchor_profiles:
             guests = [n for n in result if n.startswith("Guest_")]
             for guest in guests:

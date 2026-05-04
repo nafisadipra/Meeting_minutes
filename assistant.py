@@ -1,33 +1,19 @@
+# assistant.py  -- FINAL CLEAN VERSION
 import threading
 import queue
 import time
 import numpy as np
 import speech_recognition as sr
 import torch
+from scipy.spatial.distance import cosine as cos_dist
 from faster_whisper import WhisperModel
-from speechbrain.inference.speaker import EncoderClassifier # Add this
+from speechbrain.inference.speaker import EncoderClassifier
 
 from speaker_bank import SmartSpeakerBank
 from summarizer import LocalLLMSummarizer
 
 
 class MeetingAssistant:
-    """
-    Meeting assistant with live enrollment.
-    
-    The previous architecture relied on pre-meeting voice enrollment, but
-    pyannote embeddings are not stable enough across different recording
-    conditions for cross-condition matching to work reliably. This version
-    treats pre-meeting enrollment as a hint only and builds robust speaker
-    profiles from actual meeting audio.
-    
-    Strategy:
-    1. First N seconds of each speaker's meeting audio are accumulated
-       into a "live profile" before any matching decisions are made.
-    2. Matching only begins after we have at least one live profile.
-    3. Pre-enrolled profiles are used as a tiebreaker for naming the
-       discovered clusters, not for direct distance matching.
-    """
 
     MIN_RELIABLE_EMBEDDING_SAMPLES = 48000
     MIN_USABLE_EMBEDDING_SAMPLES = 24000
@@ -35,9 +21,7 @@ class MeetingAssistant:
 
     CONTINUITY_WINDOW_SECONDS = 5.0
     STRONG_CONTINUITY_WINDOW_SECONDS = 3.0
-
-    # How much audio to accumulate per speaker before locking in their profile
-    LIVE_ENROLLMENT_TARGET_SAMPLES = 80000  # 5 seconds total across utterances
+    TRANSITION_DISTANCE_JUMP = 0.12
 
     def __init__(self, hf_token, enrolled_profiles=None, expected_attendees=None):
         self.audio_queue = queue.Queue()
@@ -46,7 +30,9 @@ class MeetingAssistant:
         self.last_speaker = "Unknown"
         self.last_speaker_time = 0.0
         self.last_confidence = 0.0
-        self.recent_decisions = []
+
+        # Rolling history of (timestamp, speaker, distance) for transition detection
+        self.speaker_distance_history = []
 
         self.recognizer = sr.Recognizer()
         self.recognizer.energy_threshold = 300
@@ -67,13 +53,12 @@ class MeetingAssistant:
         self.whisper = WhisperModel("base.en", device="cpu", compute_type="int8")
 
         print("Loading SpeechBrain ECAPA-TDNN Embedding Model...")
-        # Replace Pyannote with SpeechBrain's ECAPA-TDNN
         self.encoder = EncoderClassifier.from_hparams(
-            source="speechbrain/spkrec-ecapa-voxceleb", 
-            run_opts={"device":"cpu"} # change to "cuda" if you have a GPU
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            run_opts={"device": "cpu"}
         )
-    def _extract_embedding(self, audio_np, sample_rate):
-        # SpeechBrain expects a tensor of shape (batch, time)
+
+    def _extract_embedding(self, audio_np):
         tensor = torch.from_numpy(audio_np).unsqueeze(0)
         with torch.no_grad():
             embeddings = self.encoder.encode_batch(tensor)
@@ -83,7 +68,7 @@ class MeetingAssistant:
         with sr.Microphone(sample_rate=16000) as source:
             print("Adjusting for ambient noise...")
             self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
-            print("Listening... (Press Ctrl+C to stop)")
+            print("Listening...")
 
             while self.is_recording:
                 try:
@@ -102,29 +87,68 @@ class MeetingAssistant:
                   else self.CONTINUITY_WINDOW_SECONDS)
         return elapsed <= window
 
-    def _decide_speaker(self, audio_np, sample_rate, current_time):
-        n_samples = len(audio_np)
+    def _is_transition_detected(self, vector, current_time):
+        """
+        Compare this embedding's distance to the last speaker's centroid
+        against the rolling average distance for that speaker. A significant
+        jump indicates a speaker change and suppresses continuity preference.
+        """
+        if self.last_speaker == "Unknown":
+            return False
+        if self.last_speaker not in self.bank.centroids:
+            return False
 
-        if n_samples < self.SHORT_AUDIO_INHERIT_SAMPLES:
-            if self._is_continuity_likely(current_time):
-                return self.last_speaker, 0.0, False
+        current_dist = cos_dist(
+            np.asarray(vector).flatten(),
+            self.bank.centroids[self.last_speaker]
+        )
 
-        try:
-            vector = self._extract_embedding(audio_np, sample_rate)
-        except Exception as e:
-            print(f"[Embedding Error]: {e}")
+        recent = [
+            d for (t, spk, d) in self.speaker_distance_history
+            if spk == self.last_speaker
+            and (current_time - t) <= self.CONTINUITY_WINDOW_SECONDS
+        ]
+
+        if len(recent) < 2:
+            # Insufficient history: only flag obvious mismatches
+            return current_dist > 0.55
+
+        avg_dist = np.mean(recent)
+        jump = current_dist - avg_dist
+        return jump > self.TRANSITION_DISTANCE_JUMP
+
+    def _record_distance(self, speaker, vector, current_time):
+        if speaker not in self.bank.centroids:
+            return
+        dist = cos_dist(
+            np.asarray(vector).flatten(),
+            self.bank.centroids[speaker]
+        )
+        self.speaker_distance_history.append((current_time, speaker, dist))
+        self.speaker_distance_history = self.speaker_distance_history[-30:]
+
+    def _decide_speaker(self, vector, n_samples, current_time):
+        """
+        Decide speaker from a pre-extracted embedding vector (or None if
+        the audio was too short to embed).
+        """
+        # Very short audio: always inherit if continuity is likely
+        if vector is None:
             if self._is_continuity_likely(current_time):
-                return self.last_speaker, 0.0, False
-            return "Unknown", 0.0, False
+                return self.last_speaker, 0.0
+            return "Unknown", 0.0
 
         is_reliable = n_samples >= self.MIN_RELIABLE_EMBEDDING_SAMPLES
+        transition_detected = self._is_transition_detected(vector, current_time)
 
+        # Continuity preference is suppressed at speaker transitions
         prefer_label = None
-        if self._is_continuity_likely(current_time):
+        if self._is_continuity_likely(current_time) and not transition_detected:
             prefer_label = self.last_speaker
 
         if not is_reliable:
-            if self._is_continuity_likely(current_time, strong=True):
+            if (self._is_continuity_likely(current_time, strong=True)
+                    and not transition_detected):
                 proposed_label, confidence = self.bank.score_against_known(
                     vector, self.last_speaker
                 )
@@ -133,19 +157,19 @@ class MeetingAssistant:
                         self.bank.update_centroid(
                             self.last_speaker, vector, n_samples=n_samples
                         )
-                    return self.last_speaker, confidence, True
+                    return self.last_speaker, confidence
 
             label, confidence = self.bank.process_segment(
                 vector, allow_new_speaker=False, prefer_label=prefer_label,
                 n_samples=n_samples,
             )
-            return label, confidence, True
+            return label, confidence
 
         label, confidence = self.bank.process_segment(
             vector, allow_new_speaker=True, prefer_label=prefer_label,
             n_samples=n_samples,
         )
-        return label, confidence, True
+        return label, confidence
 
     def _processor_thread(self):
         while self.is_recording or not self.audio_queue.empty():
@@ -158,22 +182,33 @@ class MeetingAssistant:
                 )
 
                 segments, _ = self.whisper.transcribe(audio_np, beam_size=5)
-                text = "".join([segment.text for segment in segments]).strip()
+                text = "".join([seg.text for seg in segments]).strip()
 
                 if not text:
                     continue
 
-                speaker_label, confidence, was_embedded = self._decide_speaker(
-                    audio_np, audio_window.sample_rate, current_time
+                n_samples = len(audio_np)
+
+                # Extract embedding once. Skip for very short audio.
+                vector = None
+                if n_samples >= self.SHORT_AUDIO_INHERIT_SAMPLES:
+                    try:
+                        vector = self._extract_embedding(audio_np)
+                    except Exception as e:
+                        print(f"[Embedding Error]: {e}")
+
+                speaker_label, confidence = self._decide_speaker(
+                    vector, n_samples, current_time
                 )
+
+                # Record distance AFTER decision so the centroid is updated
+                # before we measure distance against it next time.
+                if vector is not None:
+                    self._record_distance(speaker_label, vector, current_time)
 
                 self.last_speaker = speaker_label
                 self.last_speaker_time = current_time
                 self.last_confidence = confidence
-                self.recent_decisions.append(
-                    (current_time, speaker_label, confidence)
-                )
-                self.recent_decisions = self.recent_decisions[-10:]
 
                 if (
                     self.full_transcript
@@ -183,8 +218,7 @@ class MeetingAssistant:
                         self.full_transcript[-1].rstrip() + " " + text
                     )
                 else:
-                    log_entry = f"[{speaker_label}]: {text}"
-                    self.full_transcript.append(log_entry)
+                    self.full_transcript.append(f"[{speaker_label}]: {text}")
 
                 print(f"[{speaker_label} | conf={confidence:.2f}]: {text}")
 
