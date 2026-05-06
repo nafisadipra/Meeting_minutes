@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.env.*
+models/
+data/voice_profiles/
+data/minutes.txt
