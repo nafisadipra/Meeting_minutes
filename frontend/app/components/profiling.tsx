@@ -24,7 +24,7 @@ export default function Profiling({ onProfileComplete }: ProfilingProps) {
         const data = await res.json();
         if (data.enrolled_profiles) setProfiles(data.enrolled_profiles);
       } catch {
-        // Non-critical — roster will be empty until next load.
+        // Handle silently
       }
     };
     fetchProfiles();
@@ -39,7 +39,7 @@ export default function Profiling({ onProfileComplete }: ProfilingProps) {
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
-      setErrorMsg("Microphone access denied.");
+      setErrorMsg("Microphone access denied. Check permissions.");
       return;
     }
 
@@ -93,112 +93,96 @@ export default function Profiling({ onProfileComplete }: ProfilingProps) {
   const isBusy = isRecording || isUploading;
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      transition={{ duration: 0.3 }}
-      className="w-full h-full space-y-6"
+    <motion.div 
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: "easeOut" }}
+      className="max-w-4xl mx-auto w-full flex flex-col gap-10"
     >
-      <div className="flex items-center gap-3 mb-2">
-        <div className="w-10 h-10 bg-white border border-gray-200 rounded-xl flex items-center justify-center text-xl shadow-sm">
-          🎙️
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight text-black">Voice Identity Registration</h1>
+      
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-black tracking-tight">Voice Identity Registry</h1>
+        <p className="text-sm text-gray-700 mt-2">
+          Manage the local database of recognized speaker profiles.
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Enrollment Bar */}
+      <div className="flex flex-col gap-2">
+        <label className="text-xs font-bold text-black uppercase tracking-widest">
+          Enroll New Subject
+        </label>
+        
+        <div className="flex flex-col sm:flex-row gap-3">
+          <input
+            className="flex-1 bg-white border border-black rounded-md px-4 py-3 outline-none text-black placeholder:text-gray-500 text-sm"
+            placeholder="Enter subject name (e.g. John Doe)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={isBusy}
+          />
 
-        {/* Enrollment Tool */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200 h-fit">
-          <h3 className="text-sm font-bold text-[#facc15] uppercase tracking-widest mb-4 border-b border-gray-200 pb-2">Capture Voice Print</h3>
-          <p className="text-xs text-black/60 font-medium mb-6">
-            Enter an attendee&apos;s name and record a 5-second audio sample to train the local recognition engine.
-          </p>
-
-          <div className="space-y-4">
-            <input
-              className="w-full px-4 py-3 text-sm bg-gray-100 border-none rounded-xl focus:ring-2 focus:ring-[#facc15] transition-all outline-none text-black placeholder:text-gray-400 font-medium"
-              placeholder="e.g. John Doe"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={isBusy}
-            />
-
-            {errorMsg && (
-              <p className="text-xs font-semibold text-red-500 px-1">{errorMsg}</p>
-            )}
-
-            <button
-              onClick={recordVoice}
-              disabled={isBusy || !name.trim()}
-              className={`w-full py-3 rounded-xl text-sm font-bold transition-all flex items-center justify-center gap-2 ${
-                isBusy
-                  ? "bg-black text-gray-100 shadow-md"
-                  : "bg-[#facc15] text-black hover:bg-[#eab308] disabled:bg-gray-200 disabled:text-gray-400 shadow-sm disabled:shadow-none"
-              }`}
-            >
-              {isRecording ? (
-                <>
-                  <motion.span
-                    animate={{ scale: [1, 1.5, 1], opacity: [1, 0.5, 1] }}
-                    transition={{ repeat: Infinity, duration: 1.5 }}
-                    className="w-2.5 h-2.5 bg-gray-100 rounded-full"
-                  />
-                  Recording...
-                </>
-              ) : isUploading ? (
-                <>
-                  <motion.span animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }} className="inline-block w-4 h-4 border-2 border-gray-300 border-t-white rounded-full" />
-                  Saving Profile...
-                </>
-              ) : (
-                "Start 5s Recording"
-              )}
-            </button>
-          </div>
+          <button
+            onClick={recordVoice}
+            disabled={isBusy || !name.trim()}
+            className={`sm:w-auto px-6 py-3 rounded-md text-sm font-bold border border-black transition-all shrink-0 ${
+              isBusy
+                ? "bg-gray-100 text-gray-500"
+                : "bg-[#D9D9D9] text-black hover:bg-gray-300 disabled:opacity-30"
+            }`}
+          >
+            {isRecording ? "Recording..." : isUploading ? "Processing..." : "Capture 5s Voice Print"}
+          </button>
         </div>
 
-        {/* Enrolled Roster */}
-        <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-200">
-          <h3 className="text-sm font-bold text-[#facc15] uppercase tracking-widest mb-4 border-b border-gray-200 pb-2">Enrolled Roster</h3>
+        <AnimatePresence>
+          {errorMsg && (
+            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-xs text-red-600 font-bold mt-1">
+              {errorMsg}
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </div>
 
-          <div className="flex flex-col gap-3">
+      {/* Roster Grid */}
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between border-b border-black pb-2">
+          <h3 className="text-xs font-bold text-black uppercase tracking-widest">System Roster</h3>
+          <span className="text-xs font-bold text-black bg-[#D9D9D9] px-2 py-1 rounded-sm border border-black">
+            {profiles.length} Active Nodes
+          </span>
+        </div>
+
+        {profiles.length === 0 ? (
+          <div className="py-12 flex flex-col items-center justify-center text-gray-500 border border-black border-dashed bg-gray-50 rounded-md">
+            <span className="text-sm font-bold">Registry is currently empty.</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
             <AnimatePresence>
-              {profiles.length === 0 ? (
+              {profiles.map((p, index) => (
                 <motion.div
-                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  className="flex flex-col items-center justify-center py-10 text-center space-y-2"
+                  key={p}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="flex items-center gap-4 p-3 bg-white border border-black rounded-md"
                 >
-                  <span className="text-3xl opacity-40">📭</span>
-                  <p className="text-gray-500 italic text-xs font-medium">No voice profiles registered.</p>
+                  <div className="w-10 h-10 border border-black bg-[#D9D9D9] text-black flex items-center justify-center text-sm font-bold shrink-0">
+                    {p[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0 flex flex-col">
+                    <span className="text-sm font-bold text-black truncate">{p}</span>
+                    <span className="text-[10px] text-gray-600 tracking-wide uppercase">Model Trained</span>
+                  </div>
                 </motion.div>
-              ) : (
-                profiles.map((p, index) => (
-                  <motion.div
-                    key={p}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ delay: index * 0.05 }}
-                    className="flex items-center gap-3 p-3 bg-gray-100/50 rounded-xl border border-gray-200"
-                  >
-                    <div className="w-10 h-10 bg-white text-[#facc15] rounded-lg border border-gray-200 flex items-center justify-center font-bold text-base shadow-sm">
-                      {p[0].toUpperCase()}
-                    </div>
-                    <div className="flex-1 flex flex-col">
-                      <span className="text-sm font-bold text-black">{p}</span>
-                      <span className="text-[10px] font-medium text-[#facc15]">Voice matched & locked</span>
-                    </div>
-                    <span className="text-[9px] font-bold text-white bg-gray-500 px-2.5 py-1 rounded-full uppercase tracking-wider shadow-sm">
-                      Ready
-                    </span>
-                  </motion.div>
-                ))
-              )}
+              ))}
             </AnimatePresence>
           </div>
-        </div>
-
+        )}
       </div>
+
     </motion.div>
   );
 }
