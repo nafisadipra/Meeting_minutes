@@ -1,4 +1,4 @@
-# Vocalis — Local Meeting Assistant
+# Grammatica — Local Meeting Assistant
 
 Privacy-first meeting transcription with automatic speaker identification, live diarization, and AI-generated minutes. Everything runs on your machine — no cloud, no subscriptions.
 
