@@ -24,6 +24,9 @@ export default function Home() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
 
+  const [isRenameModalOpen, setIsRenameModalOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+
   const [history, setHistory] = useState<SavedSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
 
@@ -210,13 +213,32 @@ export default function Home() {
       }
     } else if (option === "Save") {
       if (currentSessionId) {
+        const currentSession = history.find(s => s.id === currentSessionId);
+        const willSave = !currentSession?.isSaved;
+
         const updatedHistory = history.map(s => 
-          s.id === currentSessionId ? { ...s, isSaved: !s.isSaved } : s
+          s.id === currentSessionId ? { 
+            ...s, 
+            isSaved: willSave,
+            // 🚨 This completely erases the transcript data when added to the Vault
+            transcript: willSave ? [] : s.transcript 
+          } : s
         );
         saveToHistory(updatedHistory);
+        
+        // Clear the left pane immediately so you can see the transcript was discarded
+        if (willSave) {
+          setTranscript([]);
+        }
       }
     } else if (option === "Rename") {
-      console.log("Rename clicked");
+      if (currentSessionId) {
+        const session = history.find(s => s.id === currentSessionId);
+        if (session) {
+          setRenameValue(session.name);
+          setIsRenameModalOpen(true);
+        }
+      }
     }
   };
 
@@ -233,6 +255,16 @@ export default function Home() {
     
     setSessionToEdit(null);
     setView("meeting"); // Return to the document view
+  };
+
+  const handleRenameSubmit = () => {
+    if (currentSessionId && renameValue.trim()) {
+      const updatedHistory = history.map(s => 
+        s.id === currentSessionId ? { ...s, name: renameValue.trim() } : s
+      );
+      saveToHistory(updatedHistory);
+      setIsRenameModalOpen(false);
+    }
   };
 
   const loadPastSession = (session: SavedSession) => {
@@ -315,6 +347,45 @@ export default function Home() {
         )}
       </AnimatePresence>
 
+      {/* RENAME MODAL */}
+      <AnimatePresence>
+        {isRenameModalOpen && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/10 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-[400px] p-8 rounded-xl border border-[#C4C4C4] shadow-lg"
+            >
+              <h2 className="text-xl font-bold mb-4">Rename Session</h2>
+              <input 
+                type="text" 
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                className="w-full bg-white border border-[#C4C4C4] rounded-md px-4 py-3 text-sm mb-6 outline-none focus:border-black transition-colors"
+                autoFocus
+                onKeyDown={(e) => e.key === 'Enter' && handleRenameSubmit()}
+              />
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setIsRenameModalOpen(false)}
+                  className="flex-1 py-3 rounded-md text-sm font-bold bg-white border border-[#C4C4C4] hover:bg-gray-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRenameSubmit}
+                  disabled={!renameValue.trim()}
+                  className="flex-1 py-3 rounded-md text-sm font-bold bg-[#D9D9D9] border border-[#C4C4C4] hover:bg-gray-300 disabled:opacity-50 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* TOP HEADER ROW */}
       <header className="flex justify-between items-start mb-6 shrink-0 print:hidden">
         
@@ -326,7 +397,7 @@ export default function Home() {
               className="w-full h-full object-contain" 
             />
           </div>
-          <div className="h-[27.2px] flex items-center shrink-0">
+          <div className="h-[45px] flex items-center shrink-0">
             <img 
               src="/img/grammatica-text.png" 
               alt="Grammatica Text" 
@@ -336,11 +407,11 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3 bg-[#D9D9D9] rounded-md px-4 py-2 min-h-[40px]">
+          <div className="flex items-stretch">
             {view === "meeting" ? (
-              <>
+              <div className="flex items-stretch border border-[#C4C4C4] rounded-md overflow-hidden bg-white h-10">
                 <input
-                  className="w-64 px-3 py-1 text-sm bg-white focus:outline-none text-black placeholder:text-gray-500 rounded-sm"
+                  className="w-64 px-4 text-sm bg-white focus:outline-none text-black placeholder:text-gray-500"
                   placeholder="Expected Attendees (e.g. Nafis)"
                   value={attendeesInput}
                   onChange={(e) => setAttendeesInput(e.target.value)}
@@ -350,7 +421,7 @@ export default function Home() {
                 {!isRecording && !isBusy && (transcript.length > 0 || minutes) && (
                   <button
                     onClick={clearMeeting}
-                    className="px-4 py-1 text-sm font-bold text-black bg-white border border-[#C4C4C4] rounded-sm hover:bg-gray-100 transition-colors"
+                    className="px-4 text-sm font-bold text-black bg-white border-l border-[#C4C4C4] hover:bg-gray-100 transition-colors"
                   >
                     Clear
                   </button>
@@ -359,17 +430,21 @@ export default function Home() {
                 <button
                   onClick={isRecording ? stopMeeting : startMeeting}
                   disabled={isBusy}
-                  className={`px-6 py-1 text-sm font-bold border-2 border-[#C4C4C4] rounded-sm disabled:opacity-50 transition-colors ${
-                    isRecording ? "bg-black text-white hover:bg-gray-800" : "bg-white text-black hover:bg-gray-100"
+                  className={`px-6 text-sm font-bold border-l border-[#C4C4C4] disabled:opacity-50 transition-colors ${
+                    isRecording ? "bg-black text-white hover:bg-gray-800" : "bg-[#E5E5E5] text-black hover:bg-[#D4D4D4]"
                   }`}
                 >
                   {isBusy ? "Processing..." : isRecording ? "Stop & Summarize" : "Start Session"}
                 </button>
-              </>
+              </div>
             ) : view === "profiling" ? (
-              <span className="px-4 py-1 text-sm font-bold text-black">Voice Profiling Engine Active</span>
+              <div className="flex items-center bg-[#D9D9D9] rounded-md px-6 border border-[#C4C4C4] h-10">
+                <span className="text-sm font-bold text-black">Voice Profiling Engine Active</span>
+              </div>
             ) : (
-              <span className="px-4 py-1 text-sm font-bold text-black">Document Vault</span>
+              <div className="flex items-center bg-[#D9D9D9] rounded-md px-6 border border-[#C4C4C4] h-10">
+                <span className="text-sm font-bold text-black">Document Vault</span>
+              </div>
             )}
           </div>
 
@@ -425,7 +500,7 @@ export default function Home() {
       </header>
 
       {/* BOTTOM WORKSPACE */}
-      <div className="flex flex-1 gap-16 min-h-0">
+      <div className="flex flex-1 gap-10 min-h-0">
         
         {/* Left Sidebar Complex */}
         <div className="flex shrink-0 print:hidden">
@@ -434,81 +509,89 @@ export default function Home() {
             
             <button
               onClick={() => setIsHistoryOpen(!isHistoryOpen)}
-              className={`w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white ${
+              className={`relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all border border-[#C4C4C4] ${
                 isHistoryOpen 
-                  ? "border-2 border-[#C4C4C4] shadow-[inset_2px_2px_4px_rgba(0,0,0,0.1)]" 
-                  : "border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300"
+                  ? "bg-[#D9D9D9]" 
+                  : "bg-white hover:bg-gray-50"
               }`}
               title="Toggle History"
             >
-              <svg className="w-5 h-5 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <svg 
+                className="w-[30px] h-[30px] text-black relative z-10" 
+                viewBox="0 0 24 24" 
+                fill="currentColor"
+              >
+                <path 
+                  fillRule="evenodd" 
+                  clipRule="evenodd" 
+                  d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8zm1-13h-2v5.586l3.707 3.707 1.414-1.414L13 11.586V7z" 
+                />
               </svg>
             </button>
 
             {/* Meeting Hub Icon */}
             <button
               onClick={() => setView("meeting")}
-              className={`relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white ${
-                view === "meeting" 
-                  ? "" 
-                  : "border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300"
-              }`}
+              className="relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white border border-[#C4C4C4] hover:bg-gray-50"
               title="Meeting Hub"
             >
               {view === "meeting" && (
                 <motion.div
                   layoutId="nav-indicator"
-                  className="absolute inset-0 border-2 border-[#C4C4C4] rounded-md shadow-[inset_2px_2px_4px_rgba(0,0,0,0.1)] pointer-events-none"
+                  className="absolute inset-0 bg-[#D9D9D9] rounded-md pointer-events-none"
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
-              <svg className="w-5 h-5 text-black relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+              <svg 
+                className="w-[30px] h-[30px] text-black relative z-10" 
+                viewBox="0 0 24 24" 
+                fill="currentColor"
+              >
+                <path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z" />
               </svg>
             </button>
 
             {/* Document Vault Icon */}
             <button
               onClick={() => setView("documents")}
-              className={`relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white ${
-                view === "documents" 
-                  ? "" 
-                  : "border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300"
-              }`}
+              className="relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white border border-[#C4C4C4] hover:bg-gray-50"
               title="Document Vault"
             >
               {view === "documents" && (
                 <motion.div
                   layoutId="nav-indicator"
-                  className="absolute inset-0 border-2 border-[#C4C4C4] rounded-md shadow-[inset_2px_2px_4px_rgba(0,0,0,0.1)] pointer-events-none"
+                  className="absolute inset-0 bg-[#D9D9D9] rounded-md pointer-events-none"
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
-              <svg className="w-5 h-5 text-black relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg 
+                className="w-[30px] h-[30px] text-black relative z-10" 
+                viewBox="0 0 24 24" 
+                fill="currentColor"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm0 3.5L18.5 10H14V5.5zM8 17v-2h8v2H8zm0-4v-2h8v2H8zm0-4V7h4v2H8z" />
               </svg>
             </button>
 
             {/* Voice Profiling Icon */}
             <button
               onClick={() => setView("profiling")}
-              className={`relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white ${
-                view === "profiling" 
-                  ? "" 
-                  : "border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300"
-              }`}
+              className="relative w-10 h-10 flex flex-col items-center justify-center rounded-md transition-all bg-white border border-[#C4C4C4] hover:bg-gray-50"
               title="Voice Profiling"
             >
               {view === "profiling" && (
                 <motion.div
                   layoutId="nav-indicator"
-                  className="absolute inset-0 border-2 border-[#C4C4C4] rounded-md shadow-[inset_2px_2px_4px_rgba(0,0,0,0.1)] pointer-events-none"
+                  className="absolute inset-0 bg-[#D9D9D9] rounded-md pointer-events-none"
                   transition={{ type: "spring", stiffness: 300, damping: 30 }}
                 />
               )}
-              <svg className="w-5 h-5 text-black relative z-10" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+              <svg 
+                className="w-[30px] h-[30px] text-black relative z-10" 
+                viewBox="0 0 24 24" 
+                fill="currentColor"
+              >
+                <path d="M12 12c2.761 0 5-2.239 5-5s-2.239-5-5-5-5 2.239-5 5 2.239 5 5 5zm-8 7c0-2.761 3.582-5 8-5s8 2.239 8 5v2H4v-2z" />
               </svg>
             </button>
 
@@ -629,7 +712,7 @@ export default function Home() {
                 className="flex-1 flex h-full print:block"
               >
                 {/* LEFT PANE: Transcript */}
-                <div className="w-1/3 border-r border-[#C4C4C4] flex flex-col overflow-hidden print:hidden bg-[#FAFAFA]">
+                <div className="w-1/3 border-r border-[#C4C4C4] flex flex-col overflow-hidden print:hidden bg-[white]">
                   <div className="p-6 pb-2 flex justify-between items-center z-10">
                     <h2 className="text-black font-bold uppercase text-xs tracking-widest">Live Transcript</h2>
                     {isRecording && <span className="text-xs font-bold text-black animate-pulse">● REC</span>}

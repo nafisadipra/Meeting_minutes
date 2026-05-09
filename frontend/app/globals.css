@@ -8,8 +8,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  /* Map Tailwind's default font to the typewriter font */
-  --font-sans: var(--font-typewriter);
+  /* Map Tailwind's internal font variables to Georgia just to be safe */
+  --font-sans: Georgia, serif;
+  --font-mono: Georgia, serif;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -22,6 +23,12 @@
 body {
   background: var(--background);
   color: var(--foreground);
-  /* Apply it to the body */
-  font-family: var(--font-typewriter), monospace;
+}
+
+/* FORCE GEORGIA REGULAR GLOBALLY 
+  This overrides all Tailwind classes like font-sans, font-mono, and font-bold
+*/
+* {
+  font-family: Georgia, serif !important;
+  font-weight: 400 !important; 
 }

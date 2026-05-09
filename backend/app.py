@@ -170,6 +170,30 @@ def list_profiles() -> tuple[Response, int]:
     return jsonify({"enrolled_profiles": names, "count": len(names)}), 200
 
 
+@app.route("/api/delete_profile", methods=["POST"])
+def delete_profile() -> tuple[Response, int]:
+    global enrolled_profiles
+    data = request.json or {}
+    name = data.get("name")
+
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+
+    # 1. Remove from active memory
+    with _state_lock:
+        if name in enrolled_profiles:
+            del enrolled_profiles[name]
+
+    # 2. Delete the physical .npy file from the disk
+    file_path = os.path.join(profiler.profiles_dir, f"{name}.npy")
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            return jsonify({"error": f"Failed to delete file: {str(e)}"}), 500
+            
+    return jsonify({"status": f"Profile '{name}' deleted successfully"}), 200
+
 if __name__ == "__main__":
     port = int(os.getenv("FLASK_PORT", 5000))
     debug = os.getenv("FLASK_DEBUG", "False").lower() == "true"

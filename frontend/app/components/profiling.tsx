@@ -88,6 +88,22 @@ export default function Profiling({ onProfileComplete }: ProfilingProps) {
     }, 5000);
   };
 
+  const deleteProfile = async (nameToDelete: string) => {
+    // Optimistically update the UI immediately
+    setProfiles((prev) => prev.filter((p) => p !== nameToDelete));
+    
+    try {
+      // Send the delete request to your backend
+      await fetch(`${API_BASE}/api/delete_profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: nameToDelete }),
+      });
+    } catch (err) {
+      console.error("Failed to delete profile:", err);
+    }
+  };
+
   const isRecording = status === "recording";
   const isUploading = status === "uploading";
   const isBusy = isRecording || isUploading;
@@ -166,16 +182,28 @@ export default function Profiling({ onProfileComplete }: ProfilingProps) {
                   key={p}
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.9 }}
                   transition={{ delay: index * 0.05 }}
-                  className="flex items-center gap-4 p-3 bg-white border border-black rounded-md"
+                  className="flex items-center gap-4 p-3 bg-white border border-black rounded-md group relative overflow-hidden"
                 >
                   <div className="w-10 h-10 border border-black bg-[#D9D9D9] text-black flex items-center justify-center text-sm font-bold shrink-0">
                     {p[0].toUpperCase()}
                   </div>
-                  <div className="flex-1 min-w-0 flex flex-col">
+                  <div className="flex-1 min-w-0 flex flex-col pr-10">
                     <span className="text-sm font-bold text-black truncate">{p}</span>
                     <span className="text-[10px] text-gray-600 tracking-wide uppercase">Model Trained</span>
                   </div>
+
+                  {/* Delete Button (Appears on Hover) */}
+                  <button
+                    onClick={() => deleteProfile(p)}
+                    className="absolute right-3 flex items-center justify-center w-8 h-8 text-[black] hover:text-red-600 transition-colors"
+                    title={`Delete ${p}`}
+                  >
+                    <svg className="w-[18px] h-[18px]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
                 </motion.div>
               ))}
             </AnimatePresence>
