@@ -2,12 +2,19 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { motion, AnimatePresence } from "framer-motion";
 import Profiling from "./components/profiling";
 import DocumentVault, { SavedSession } from "./components/document";
 import EditDocument from "./components/edit"; 
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:5000";
+
+// Ensure every table block is preceded by a blank line so remark-gfm can
+// parse it even when the LLM omits the blank line (e.g. after a list item).
+function normalizeMarkdown(md: string): string {
+  return md.replace(/([^|\n])\n(\|)/g, "$1\n\n$2");
+}
 
 export default function Home() {
   const [view, setView] = useState<"meeting" | "profiling" | "documents" | "edit">("meeting");
@@ -36,6 +43,10 @@ export default function Home() {
   const minutesRef = useRef<string | null>(null);
   minutesRef.current = minutes;
 
+  // When true the poll may write to transcript/minutes; false means user is
+  // browsing a historical session and the poll must not clobber what they see.
+  const isLiveViewRef = useRef(true);
+
   useEffect(() => {
     const saved = localStorage.getItem("grammatica_history");
     if (saved) {
@@ -54,7 +65,9 @@ export default function Home() {
       if (!res.ok) return;
       const data = await res.json();
       setIsRecording(data.is_recording);
-      setTranscript(data.transcript ?? []);
+      if (isLiveViewRef.current) {
+        setTranscript(data.transcript ?? []);
+      }
 
       if (!data.is_recording && data.transcript?.length > 0 && !minutesRef.current) {
         const mRes = await fetch(`${API_BASE}/api/minutes`);
@@ -95,6 +108,7 @@ export default function Home() {
   }, [poll]);
 
   const startMeeting = async () => {
+    isLiveViewRef.current = true;
     setIsStarting(true);
     setMinutes(null);
     setTranscript([]);
@@ -151,6 +165,7 @@ export default function Home() {
   };
 
   const clearMeeting = async () => {
+    isLiveViewRef.current = true;
     await fetch(`${API_BASE}/api/clear`, { method: "POST" });
     setTranscript([]);
     setMinutes(null);
@@ -158,31 +173,44 @@ export default function Home() {
     setCurrentSessionId(null);
   };
 
-  const generateDocx = (content: string, fileName: string) => {
+  const exportFromBackend = async (format: "docx" | "pdf", content: string, fileName: string) => {
     if (!content) return;
-    const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Meeting Minutes</title></head><body>";
-    const footer = "</body></html>";
-    const htmlContent = content.replace(/\n/g, '<br>').replace(/## (.*)/g, '<h2>$1</h2>').replace(/# (.*)/g, '<h1>$1</h1>');
-    const sourceHTML = header + htmlContent + footer;
-    
-    const blob = new Blob(['\ufeff', sourceHTML], { type: 'application/msword' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${fileName.replace(/[^a-z0-9]/gi, '_')}.doc`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const res = await fetch(`${API_BASE}/api/export/${format}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content, filename: fileName }),
+      });
+      if (!res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${fileName.replace(/[^a-z0-9]/gi, "_")}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // Backend unreachable
+    }
   };
 
+  const generateDocx = (content: string, fileName: string) => {
+    exportFromBackend("docx", content, fileName);
+  };
+
+  const currentSessionName = currentSessionId
+    ? (history.find(s => s.id === currentSessionId)?.name ?? "Meeting_Minutes")
+    : "Meeting_Minutes";
+
   const downloadDocx = () => {
-    if (minutes) generateDocx(minutes, "Meeting_Minutes");
+    if (minutes) exportFromBackend("docx", minutes, currentSessionName);
     setIsExportOpen(false);
   };
 
   const downloadPdf = () => {
-    window.print();
+    if (minutes) exportFromBackend("pdf", minutes, currentSessionName);
     setIsExportOpen(false);
   };
 
@@ -216,20 +244,10 @@ export default function Home() {
         const currentSession = history.find(s => s.id === currentSessionId);
         const willSave = !currentSession?.isSaved;
 
-        const updatedHistory = history.map(s => 
-          s.id === currentSessionId ? { 
-            ...s, 
-            isSaved: willSave,
-            // 🚨 This completely erases the transcript data when added to the Vault
-            transcript: willSave ? [] : s.transcript 
-          } : s
+        const updatedHistory = history.map(s =>
+          s.id === currentSessionId ? { ...s, isSaved: willSave } : s
         );
         saveToHistory(updatedHistory);
-        
-        // Clear the left pane immediately so you can see the transcript was discarded
-        if (willSave) {
-          setTranscript([]);
-        }
       }
     } else if (option === "Rename") {
       if (currentSessionId) {
@@ -268,6 +286,7 @@ export default function Home() {
   };
 
   const loadPastSession = (session: SavedSession) => {
+    isLiveViewRef.current = false;
     setTranscript(session.transcript);
     setMinutes(session.minutes);
     setCurrentSessionId(session.id);
@@ -793,7 +812,7 @@ export default function Home() {
                   <div className="flex-1 overflow-y-auto p-6 prose max-w-none print:overflow-visible print:p-8">
                     {minutes ? (
                       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-                        <ReactMarkdown>{minutes}</ReactMarkdown>
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(minutes)}</ReactMarkdown>
                       </motion.div>
                     ) : !isRecording && transcript.length > 0 ? (
                       <div className="h-full flex flex-col items-center justify-center opacity-50">

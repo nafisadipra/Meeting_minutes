@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Vocalis — Meeting Assistant",
+  title: "Grammatica — Meeting Assistant",
   description: "Local AI meeting transcription and speaker identification",
 };
 

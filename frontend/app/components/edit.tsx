@@ -3,6 +3,11 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
+function normalizeMarkdown(md: string): string {
+  return md.replace(/([^|\n])\n(\|)/g, "$1\n\n$2");
+}
 
 export interface SavedSession {
   id: string;
@@ -75,7 +80,7 @@ export default function EditDocument({ session, onSave, onCancel }: EditDocument
 
         {/* RIGHT: Live Preview */}
         <div className="flex-1 bg-white overflow-y-auto p-8 prose max-w-none relative group">
-          <ReactMarkdown>{content}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{normalizeMarkdown(content)}</ReactMarkdown>
           <div className="absolute top-4 right-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
             Live Preview
           </div>
