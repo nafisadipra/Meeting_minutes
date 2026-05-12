@@ -38,6 +38,7 @@ export default function Home() {
 
   const [history, setHistory] = useState<SavedSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [discoveredProfiles, setDiscoveredProfiles] = useState<
     Record<string, number[]>
@@ -324,7 +325,12 @@ export default function Home() {
 
   const isBusy = isStarting || isStopping;
 
-  const sortedHistory = [...history].sort((a, b) => {
+  const filteredAndSortedHistory = [...history]
+  .filter((session) => 
+    session.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    session.date.toLowerCase().includes(searchQuery.toLowerCase())
+  )
+  .sort((a, b) => {
     if (a.isPinned === b.isPinned) return b.timestamp - a.timestamp;
     return a.isPinned ? -1 : 1;
   });
@@ -683,6 +689,8 @@ export default function Home() {
                     <input
                       type="text"
                       placeholder="Search history..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
                       className="w-full bg-white border border-[#C4C4C4] rounded-md px-4 py-2 text-sm text-black placeholder:text-gray-500 outline-none focus:border-gray-400 transition-colors"
                     />
                   </div>
@@ -691,12 +699,12 @@ export default function Home() {
                       Recent Sessions
                     </h3>
 
-                    {sortedHistory.length === 0 ? (
+                    {filteredAndSortedHistory.length === 0 ? (
                       <p className="text-xs text-gray-400 italic">
                         No recent sessions.
                       </p>
                     ) : (
-                      sortedHistory.map((session) => (
+                      filteredAndSortedHistory.map((session) => (
                         <button
                           key={session.id}
                           onClick={() => {
